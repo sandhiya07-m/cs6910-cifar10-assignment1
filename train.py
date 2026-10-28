@@ -2,30 +2,30 @@
 import argparse
 import numpy as np
 import wandb
-from tensorflow.keras.datasets import mnist
+from tensorflow.keras.datasets import mnist, fashion_mnist
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-wp", "--wandb_project", default="cs6910-assignment1")
-    parser.add_argument("-we", "--wandb_entity", default=None)
-    parser.add_argument("-d", "--dataset", choices=["mnist", "fashion_mnist"], default="mnist")
-    parser.add_argument("-e", "--epochs", type=int, default=10)
-    parser.add_argument("-b", "--batch_size", type=int, default=64)
-    parser.add_argument("-l", "--loss", choices=["mean_squared_error", "cross_entropy"], default="cross_entropy")
-    parser.add_argument("-o", "--optimizer", choices=["sgd", "momentum", "nag", "rmsprop", "adam", "nadam"], default="nadam")
-    parser.add_argument("-lr", "--learning_rate", type=float, default=0.0001)
-    parser.add_argument("-m", "--momentum", type=float, default=0.5)
-    parser.add_argument("-beta", "--beta", type=float, default=0.5)
-    parser.add_argument("-beta1", "--beta1", type=float, default=0.9)
-    parser.add_argument("-beta2", "--beta2", type=float, default=0.999)
-    parser.add_argument("-eps", "--epsilon", type=float, default=1e-8)
-    parser.add_argument("-w_d", "--weight_decay", type=float, default=0.0005)
-    parser.add_argument("-w_i", "--weight_init", choices=["random", "Xavier"], default="Xavier")
-    parser.add_argument("-nhl", "--num_layers", type=int, default=5)
-    parser.add_argument("-sz", "--hidden_size", type=int, default=64)
-    parser.add_argument("-a", "--activation", choices=["identity", "sigmoid", "tanh", "ReLU"], default="ReLU")
-    return parser.parse_args()
+    p = argparse.ArgumentParser()
+    p.add_argument("-wp", "--wandb_project", default="cs6910-assignment1")
+    p.add_argument("-we", "--wandb_entity", default=None)
+    p.add_argument("-d", "--dataset", choices=["mnist", "fashion_mnist"], default="mnist")
+    p.add_argument("-e", "--epochs", type=int, default=10)
+    p.add_argument("-b", "--batch_size", type=int, default=64)
+    p.add_argument("-l", "--loss", choices=["mean_squared_error", "cross_entropy"], default="cross_entropy")
+    p.add_argument("-o", "--optimizer", choices=["sgd", "momentum", "nag", "rmsprop", "adam", "nadam"], default="nadam")
+    p.add_argument("-lr", "--learning_rate", type=float, default=0.0001)
+    p.add_argument("-m", "--momentum", type=float, default=0.5)
+    p.add_argument("-beta", "--beta", type=float, default=0.5)
+    p.add_argument("-beta1", "--beta1", type=float, default=0.9)
+    p.add_argument("-beta2", "--beta2", type=float, default=0.999)
+    p.add_argument("-eps", "--epsilon", type=float, default=1e-8)
+    p.add_argument("-w_d", "--weight_decay", type=float, default=0.0005)
+    p.add_argument("-w_i", "--weight_init", choices=["random", "Xavier"], default="Xavier")
+    p.add_argument("-nhl", "--num_layers", type=int, default=5)
+    p.add_argument("-sz", "--hidden_size", type=int, default=64)
+    p.add_argument("-a", "--activation", choices=["identity", "sigmoid", "tanh", "ReLU"], default="ReLU")
+    return p.parse_args()
 
 
 def activate(z, name):
@@ -38,7 +38,7 @@ def activate(z, name):
     return z
 
 
-def activation_derivative(z, name):
+def derivative(z, name):
     if name == "sigmoid":
         a = activate(z, name)
         return a * (1 - a)
@@ -56,33 +56,26 @@ def softmax(z):
 
 
 def load_data(dataset):
-    if dataset == "mnist":
-        (x_train, y_train), (x_test, y_test) = mnist.load_data()
-    else:
-        from tensorflow.keras.datasets import fashion_mnist
-        (x_train, y_train), (x_test, y_test) = fashion_mnist.load_data()
+    loader = mnist if dataset == "mnist" else fashion_mnist
+    (x, y), (xt, yt) = loader.load_data()
+    x = x.reshape(-1, 784).astype(np.float32) / 255.0
+    xt = xt.reshape(-1, 784).astype(np.float32) / 255.0
 
-    x_train = x_train.reshape(-1, 784).astype(np.float32) / 255.0
-    x_test = x_test.reshape(-1, 784).astype(np.float32) / 255.0
-
-    # Fixed validation split: last 10,000 training examples
-    x_val, y_val = x_train[-10000:], y_train[-10000:]
-    x_train, y_train = x_train[:-10000], y_train[:-10000]
-
-    return x_train, y_train, x_val, y_val, x_test, y_test
+    # Use 50,000 training examples and 10,000 validation examples.
+    xv, yv = x[-10000:], y[-10000:]
+    return x[:-10000], y[:-10000], xv, yv, xt, yt
 
 
-def create_model(args, input_size=784, output_size=10):
-    sizes = [input_size] + [args.hidden_size] * args.num_layers + [output_size]
+def create_model(args):
+    sizes = [784] + [args.hidden_size] * args.num_layers + [10]
     weights, biases = [], []
 
     for fan_in, fan_out in zip(sizes[:-1], sizes[1:]):
         if args.weight_init == "Xavier":
-            limit = np.sqrt(6.0 / (fan_in + fan_out))
+            limit = np.sqrt(6 / (fan_in + fan_out))
             w = np.random.uniform(-limit, limit, (fan_in, fan_out))
         else:
             w = np.random.randn(fan_in, fan_out) * 0.01
-
         weights.append(w)
         biases.append(np.zeros((1, fan_out)))
 
@@ -90,96 +83,103 @@ def create_model(args, input_size=784, output_size=10):
 
 
 def forward(x, weights, biases, activation):
-    activations = [x]
+    acts = [x]
     zs = []
 
     for i, (w, b) in enumerate(zip(weights, biases)):
-        z = activations[-1] @ w + b
+        z = acts[-1] @ w + b
         zs.append(z)
+        a = softmax(z) if i == len(weights) - 1 else activate(z, activation)
+        acts.append(a)
 
-        if i == len(weights) - 1:
-            a = softmax(z)
-        else:
-            a = activate(z, activation)
-
-        activations.append(a)
-
-    return activations, zs
+    return acts, zs
 
 
 def loss_value(y, probs, loss_name):
-    one_hot = np.eye(10)[y]
+    target = np.eye(10)[y]
     probs = np.clip(probs, 1e-12, 1.0)
 
     if loss_name == "cross_entropy":
-        return -np.mean(np.sum(one_hot * np.log(probs), axis=1))
-
-    return np.mean(np.sum((probs - one_hot) ** 2, axis=1))
+        return float(-np.mean(np.sum(target * np.log(probs), axis=1)))
+    return float(np.mean(np.sum((probs - target) ** 2, axis=1)))
 
 
 def gradients(x, y, weights, biases, activation, loss_name):
     acts, zs = forward(x, weights, biases, activation)
-    batch_size = len(x)
-    one_hot = np.eye(10)[y]
+    target = np.eye(10)[y]
     probs = acts[-1]
+    n = len(x)
 
     if loss_name == "cross_entropy":
-        delta = (probs - one_hot) / batch_size
+        delta = (probs - target) / n
     else:
-        delta = (2.0 / batch_size) * (probs - one_hot)
-        delta *= probs * (1.0 - probs)
+        delta = (2.0 / n) * (probs - target)
+        delta *= probs * (1 - probs)
 
-    grad_w = [None] * len(weights)
-    grad_b = [None] * len(biases)
+    gw = [None] * len(weights)
+    gb = [None] * len(biases)
 
     for layer in reversed(range(len(weights))):
-        grad_w[layer] = acts[layer].T @ delta
-        grad_b[layer] = np.sum(delta, axis=0, keepdims=True)
+        gw[layer] = acts[layer].T @ delta
+        gb[layer] = np.sum(delta, axis=0, keepdims=True)
 
         if layer > 0:
             delta = (delta @ weights[layer].T)
-            delta *= activation_derivative(zs[layer - 1], activation)
+            delta *= derivative(zs[layer - 1], activation)
 
-    return grad_w, grad_b
+    return gw, gb
 
 
-def train_step(weights, biases, gw, gb, state, args, step):
+def make_state(weights, biases):
+    return {
+        "vw": [np.zeros_like(v) for v in weights],
+        "vb": [np.zeros_like(v) for v in biases],
+        "mw": [np.zeros_like(v) for v in weights],
+        "mb": [np.zeros_like(v) for v in biases],
+        "sw": [np.zeros_like(v) for v in weights],
+        "sb": [np.zeros_like(v) for v in biases],
+    }
+
+
+def update(weights, biases, gw, gb, state, args, step):
     for i in range(len(weights)):
-        gw[i] = gw[i] + args.weight_decay * weights[i]
+        g = gw[i] + args.weight_decay * weights[i]
+        h = gb[i] + args.weight_decay * biases[i]
 
         if args.optimizer == "sgd":
-            state["v_w"][i] = gw[i]
-            state["v_b"][i] = gb[i]
+            dw, db = g, h
 
         elif args.optimizer in ("momentum", "nag"):
-            state["v_w"][i] = args.momentum * state["v_w"][i] + gw[i]
-            state["v_b"][i] = args.momentum * state["v_b"][i] + gb[i]
-            gw[i] = state["v_w"][i]
-            gb[i] = state["v_b"][i]
+            state["vw"][i] = args.momentum * state["vw"][i] + g
+            state["vb"][i] = args.momentum * state["vb"][i] + h
+            dw, db = state["vw"][i], state["vb"][i]
 
         elif args.optimizer == "rmsprop":
-            state["s_w"][i] = args.beta * state["s_w"][i] + (1 - args.beta) * gw[i] ** 2
-            state["s_b"][i] = args.beta * state["s_b"][i] + (1 - args.beta) * gb[i] ** 2
-            gw[i] = gw[i] / (np.sqrt(state["s_w"][i]) + args.epsilon)
-            gb[i] = gb[i] / (np.sqrt(state["s_b"][i]) + args.epsilon)
+            state["sw"][i] = args.beta * state["sw"][i] + (1 - args.beta) * g**2
+            state["sb"][i] = args.beta * state["sb"][i] + (1 - args.beta) * h**2
+            dw = g / (np.sqrt(state["sw"][i]) + args.epsilon)
+            db = h / (np.sqrt(state["sb"][i]) + args.epsilon)
 
-        elif args.optimizer in ("adam", "nadam"):
-            state["m_w"][i] = args.beta1 * state["m_w"][i] + (1 - args.beta1) * gw[i]
-            state["m_b"][i] = args.beta1 * state["m_b"][i] + (1 - args.beta1) * gb[i]
-            state["s_w"][i] = args.beta2 * state["s_w"][i] + (1 - args.beta2) * gw[i] ** 2
-            state["s_b"][i] = args.beta2 * state["s_b"][i] + (1 - args.beta2) * gb[i] ** 2
+        else:
+            state["mw"][i] = args.beta1 * state["mw"][i] + (1 - args.beta1) * g
+            state["mb"][i] = args.beta1 * state["mb"][i] + (1 - args.beta1) * h
+            state["sw"][i] = args.beta2 * state["sw"][i] + (1 - args.beta2) * g**2
+            state["sb"][i] = args.beta2 * state["sb"][i] + (1 - args.beta2) * h**2
 
-            mw = state["m_w"][i] / (1 - args.beta1 ** step)
-            mb = state["m_b"][i] / (1 - args.beta1 ** step)
-            sw = state["s_w"][i] / (1 - args.beta2 ** step)
-            sb = state["s_b"][i] / (1 - args.beta2 ** step)
+            mw = state["mw"][i] / (1 - args.beta1**step)
+            mb = state["mb"][i] / (1 - args.beta1**step)
+            sw = state["sw"][i] / (1 - args.beta2**step)
+            sb = state["sb"][i] / (1 - args.beta2**step)
 
-            gw[i] = mw / (np.sqrt(sw) + args.epsilon)
-            gb[i] = mb / (np.sqrt(sb) + args.epsilon)
+            if args.optimizer == "nadam":
+                dw = (args.beta1 * mw + (1 - args.beta1) * g) / (np.sqrt(sw) + args.epsilon)
+                db = (args.beta1 * mb + (1 - args.beta1) * h) / (np.sqrt(sb) + args.epsilon)
+            else:
+                dw = mw / (np.sqrt(sw) + args.epsilon)
+                db = mb / (np.sqrt(sb) + args.epsilon)
 
-    for i in range(len(weights)):
-        weights[i] -= args.learning_rate * gw[i]
-        biases[i] -= args.learning_rate * gb[i]
+        weights[i] -= args.learning_rate * dw
+        biases[i] -= args.learning_rate * db
 
 
 def accuracy(x, y, weights, biases, activation):
@@ -189,56 +189,45 @@ def accuracy(x, y, weights, biases, activation):
 
 def main():
     args = parse_args()
-    np.random.seed(42)
+    if args.epochs < 1 or args.batch_size < 1 or args.num_layers < 1 or args.hidden_size < 1:
+        raise ValueError("Epochs, batch size, layers, and hidden size must be positive.")
 
+    np.random.seed(42)
     run = wandb.init(
         project=args.wandb_project,
         entity=args.wandb_entity,
         config=vars(args)
     )
 
-    x_train, y_train, x_val, y_val, x_test, y_test = load_data(args.dataset)
+    x, y, xv, yv, xt, yt = load_data(args.dataset)
     weights, biases = create_model(args)
-
-    state = {
-        key: [np.zeros_like(w) for w in weights]
-        for key in ["v_w", "s_w", "m_w"]
-    }
-    state.update({
-        key: [np.zeros_like(b) for b in biases]
-        for key in ["v_b", "s_b", "m_b"]
-    })
-
+    state = make_state(weights, biases)
     step = 0
 
     for epoch in range(args.epochs):
-        indices = np.random.permutation(len(x_train))
-        x_train, y_train = x_train[indices], y_train[indices]
+        indices = np.random.permutation(len(x))
+        x, y = x[indices], y[indices]
 
-        for start in range(0, len(x_train), args.batch_size):
-            xb = x_train[start:start + args.batch_size]
-            yb = y_train[start:start + args.batch_size]
-
-            gw, gb = gradients(
-                xb, yb, weights, biases, args.activation, args.loss
-            )
+        for start in range(0, len(x), args.batch_size):
+            xb = x[start:start + args.batch_size]
+            yb = y[start:start + args.batch_size]
+            gw, gb = gradients(xb, yb, weights, biases, args.activation, args.loss)
             step += 1
-            train_step(weights, biases, gw, gb, state, args, step)
+            update(weights, biases, gw, gb, state, args, step)
 
-        train_probs = forward(x_train[:5000], weights, biases, args.activation)[0][-1]
-        val_probs = forward(x_val, weights, biases, args.activation)[0][-1]
+        train_probs = forward(x[:5000], weights, biases, args.activation)[0][-1]
+        val_probs = forward(xv, weights, biases, args.activation)[0][-1]
 
-        train_loss = loss_value(y_train[:5000], train_probs, args.loss)
-        val_loss = loss_value(y_val, val_probs, args.loss)
-        train_acc = accuracy(x_train[:5000], y_train[:5000], weights, biases, args.activation)
-        val_acc = accuracy(x_val, y_val, weights, biases, args.activation)
+        train_loss = loss_value(y[:5000], train_probs, args.loss)
+        val_loss = loss_value(yv, val_probs, args.loss)
+        train_acc = accuracy(x[:5000], y[:5000], weights, biases, args.activation)
+        val_acc = accuracy(xv, yv, weights, biases, args.activation)
 
         print(
             f"Epoch {epoch + 1}/{args.epochs} | "
             f"train_loss={train_loss:.4f} | val_loss={val_loss:.4f} | "
             f"train_accuracy={train_acc:.4f} | val_accuracy={val_acc:.4f}"
         )
-
         wandb.log({
             "epoch": epoch + 1,
             "train_loss": train_loss,
@@ -247,7 +236,7 @@ def main():
             "val_accuracy": val_acc
         })
 
-    test_acc = accuracy(x_test, y_test, weights, biases, args.activation)
+    test_acc = accuracy(xt, yt, weights, biases, args.activation)
     print(f"Test accuracy: {test_acc:.4f}")
     wandb.log({"test_accuracy": test_acc})
     run.finish()
