@@ -163,7 +163,7 @@ def train_step(weights, biases, gw, gb, state, args, step):
             gw[i] = gw[i] / (np.sqrt(state["s_w"][i]) + args.epsilon)
             gb[i] = gb[i] / (np.sqrt(state["s_b"][i]) + args.epsilon)
 
-        else:
+               elif args.optimizer in ("adam", "nadam"):
             state["m_w"][i] = args.beta1 * state["m_w"][i] + (1 - args.beta1) * gw[i]
             state["m_b"][i] = args.beta1 * state["m_b"][i] + (1 - args.beta1) * gb[i]
             state["s_w"][i] = args.beta2 * state["s_w"][i] + (1 - args.beta2) * gw[i] ** 2
